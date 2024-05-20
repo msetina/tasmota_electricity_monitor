@@ -1,1 +1,1 @@
-Electric power mmonitor over MQTT
+Electric power monitor over MQTT
