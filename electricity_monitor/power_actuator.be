@@ -19,10 +19,15 @@ class PowerActuator
     var mqtt_state_check
     var is_on
     var power
+    var measurement_delay
+    var last_on_time
+    var last_off_time
 
 
     def init(settings,alloff_id)    
-        self.is_on = false             
+        self.is_on = false       
+        self.last_off_time = nil
+        self.last_on_time = nil      
         if settings.contains('name')   
             self.name = settings['name']
         else
@@ -66,6 +71,10 @@ class PowerActuator
         if settings.contains('mqtt_state_check')     
             self.mqtt_state_check = settings['mqtt_state_check']
             mqtt.subscribe(self.mqtt_state_check)
+        end
+        if settings.contains('measurement_delay')     
+            self.measurement_delay = settings['measurement_delay']
+            self.last_off_time = -1000 * self.measurement_delay
         end
         if settings.contains('max_on_time')     
             self.max_on_time = settings['max_on_time']
@@ -155,6 +164,10 @@ class PowerActuator
 
     def calc_new_state(data)        
         #log('emQ: Calculating new state')
+        var measurement_delay = 1000
+        if self.measurement_delay != nil
+            measurement_delay = self.measurement_delay
+        end
         var outputs = tasmota.get_power()        
         if self.check_needs_turn_off()                            
             return false
@@ -170,7 +183,15 @@ class PowerActuator
                 if cv != nil
                     #log('emQ: Got control value')
                     if !self.is_on
-                        cv = cv + self.power
+                        log(string.format('emQ: Remote is not on %d + %d',cv,self.power))
+                        if self.last_off_time != nil
+                            if (tasmota.millis() - self.last_off_time) > measurement_delay
+                                cv = cv + self.power
+                            end
+                        else
+                            cv = cv + self.power
+                        end
+                        log(string.format('emQ: Control value is %d',cv))
                     end
                     var max_value_ident = self.control_value + '_o_lmt'
                     var min_value_ident = self.control_value + '_u_lmt'
@@ -208,9 +229,11 @@ class PowerActuator
                     if payload_json != nil 
                     else                        
                         if data == 'ON'
-                            self.is_on = true
+                            rl['is_on'] = true
+                            rl['last_on_time'] = tasmota.millis()
                         elif data == 'OFF'
-                            self.is_on = false
+                            rl['is_on'] = false
+                            rl['last_off_time'] = tasmota.millis()
                         end                                            
                     end
                     ret = true 
@@ -221,9 +244,13 @@ class PowerActuator
 
                     else                        
                         if data == 'ON'
+                            log('emQ: Remote is on')
                             self.is_on = true
+                            self.last_on_time = tasmota.millis()
                         elif data == 'OFF'
+                            log('emQ: Remote is off')
                             self.is_on = false
+                            self.last_off_time = tasmota.millis()
                         end
                     end
                     ret = true
