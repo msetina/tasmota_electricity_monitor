@@ -304,8 +304,7 @@ class ElectricityMonitorMQTT
             end
         end
         if max_t > self.set_timestamp                        
-            self.set_timestamp = tasmota.millis() 
-            #self.set_consumers()
+            self.set_timestamp = tasmota.millis()             
         end
     end
   
@@ -458,16 +457,23 @@ class ElectricityMonitorMQTT
                     try
                         self.set_consumers(nm)
                     except .. as e1,m1
-                        self.error.push('MQTT data consumer error:' + m1)
+                        if size(self.error) > 5 self.error.pop() end
+                        self.error_push('MQTT data consumer error:' + m1)
                     end
                     ret = true                 
                 end 
             end                
         except .. as e,m
             ret = false
-            self.error.push('MQTT data error:' + m)
+            self.error_push('MQTT data error:' + m)
         end        
         return ret
+    end
+
+    def error_push(msg)
+        if size(self.error) > 5 self.error.pop() end
+        log(string.format("emQ: %s",msg))
+        self.error.push(msg)
     end
 
     def mqtt_setup(topic, idx, data, databytes)        
@@ -540,7 +546,7 @@ class ElectricityMonitorMQTT
                 end
                 ret = true
             except .. as e,m                
-                self.error.push('MQTT setup error:' + m)
+                self.error_push('MQTT setup error:' + m)
             end
         end  
         return ret      
