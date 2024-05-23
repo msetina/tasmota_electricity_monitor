@@ -2,9 +2,9 @@ import string
 import mqtt
 import json
 
-var power_actuator = module('power_actuator')
+var backoff_actuator = module('backoff_actuator')
 
-class PowerActuator   
+class BackoffActuator   
     var name 
     var relays
     var alloff_id       
@@ -30,7 +30,7 @@ class PowerActuator
         if settings.contains('name')   
             self.name = settings['name']
         else
-            self.name = string.format('PowerActuator')
+            self.name = string.format('BackoffActuator')
         end
         if settings.contains('relays')                 
             self.relays = settings['relays']
@@ -260,5 +260,5 @@ class PowerActuator
 end
 
 
-power_actuator.actuator = PowerActuator
-return power_actuator
+backoff_actuator.actuator = BackoffActuator
+return backoff_actuator

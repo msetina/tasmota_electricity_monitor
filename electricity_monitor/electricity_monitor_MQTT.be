@@ -5,7 +5,7 @@
  import persist
  import mqtt
  import string 
- import power_actuator
+ import backoff_actuator
 
 
   #-A command supporting setup of electricity monitor driver. It takes a JSON defining electricoty MQTT subscriptions in a list,
@@ -161,7 +161,7 @@ class ElectricityMonitorMQTT
                         end
                     end     
                                    
-                    self.actuators[nm] = power_actuator.actuator(act,alloff_id)                                    
+                    self.actuators[nm] = backoff_actuator.actuator(act,alloff_id)                                    
                     actuator_cnt -= 1
                 end
             end
