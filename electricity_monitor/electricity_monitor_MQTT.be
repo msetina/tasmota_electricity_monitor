@@ -187,7 +187,7 @@ class ElectricityMonitorMQTT
                     end
                     var report_delay = nil
                     if met.contains('report_delay')
-                        report_delay = met['report_delay']
+                        report_delay = met['report_delay']                        
                     end
                     if met.contains('topic')
                         var topic = met['topic']
@@ -198,7 +198,7 @@ class ElectricityMonitorMQTT
                             self.topics[topic]['period'] = publish_period
                         end
                         if report_delay != nil
-                            self.topics[topic]['report_delay'] = report_delay
+                            self.topics[topic]['report_delay'] = report_delay                            
                         end
                         if value_keys != nil
                             self.topics[topic]['value_keys'] = value_keys
@@ -461,7 +461,7 @@ class ElectricityMonitorMQTT
                     end
                     if tpk.contains('report_delay')   
                         var report_delay = tpk['report_delay']                        
-                        pwr_data["report_delay"] = report_delay   
+                        pwr_data["report_delay"] = report_delay                          
                     end
                     pwr_data["last"] = current  
                     self.data[nm] = pwr_data

@@ -158,11 +158,7 @@ class BackoffActuator
     end
 
     def calc_new_state(data)        
-        #log('emQ: Calculating new state')
-        var report_delay = 0
-        if data.contains('report_delay') && data['report_delay'] != nil
-            report_delay = data['report_delay'] * 1000
-        end
+        #log('emQ: Calculating new state')        
         var outputs = tasmota.get_power()        
         if self.check_needs_turn_off()                            
             return false
@@ -174,11 +170,15 @@ class BackoffActuator
         if self.control_id != nil
             var ct_id = data.find(self.control_id)            
             if self.control_value != nil && ct_id != nil
+                var report_delay = 0        
+                if ct_id.contains('report_delay') && ct_id['report_delay'] != nil                    
+                    report_delay = ct_id['report_delay'] * 1000                    
+                end
                 var cv = ct_id.find(self.control_value)
                 if cv != nil
                     #log('emQ: Got control value')
                     if !self.is_on
-                        log(string.format('emQ: Remote is not on %d + %d',cv,self.power))
+                        #log(string.format('emQ: Remote is not on %d + %d',cv,self.power))                        
                         if self.last_off_time != nil
                             if (tasmota.millis() - self.last_off_time) > report_delay
                                 cv = cv + self.power
@@ -186,7 +186,7 @@ class BackoffActuator
                         else
                             cv = cv + self.power
                         end
-                        log(string.format('emQ: Control value is %d',cv))
+                        #log(string.format('emQ: Control value is %d',cv))
                     end
                     var max_value_ident = self.control_value + '_o_lmt'
                     var min_value_ident = self.control_value + '_u_lmt'
