@@ -18,8 +18,7 @@ class PowerActuator
     var prev_state    
     var mqtt_state_check
     var is_on
-    var power
-    var measurement_delay
+    var power    
     var last_on_time
     var last_off_time
 
@@ -71,11 +70,7 @@ class PowerActuator
         if settings.contains('mqtt_state_check')     
             self.mqtt_state_check = settings['mqtt_state_check']
             mqtt.subscribe(self.mqtt_state_check)
-        end
-        if settings.contains('measurement_delay')     
-            self.measurement_delay = settings['measurement_delay']
-            self.last_off_time = -1000 * self.measurement_delay
-        end
+        end        
         if settings.contains('max_on_time')     
             self.max_on_time = settings['max_on_time']
         end
@@ -164,9 +159,9 @@ class PowerActuator
 
     def calc_new_state(data)        
         #log('emQ: Calculating new state')
-        var measurement_delay = 1000
-        if self.measurement_delay != nil
-            measurement_delay = self.measurement_delay
+        var report_delay = 0
+        if data.contains('report_delay') && data['report_delay'] != nil
+            report_delay = data['report_delay'] * 1000
         end
         var outputs = tasmota.get_power()        
         if self.check_needs_turn_off()                            
@@ -185,7 +180,7 @@ class PowerActuator
                     if !self.is_on
                         log(string.format('emQ: Remote is not on %d + %d',cv,self.power))
                         if self.last_off_time != nil
-                            if (tasmota.millis() - self.last_off_time) > measurement_delay
+                            if (tasmota.millis() - self.last_off_time) > report_delay
                                 cv = cv + self.power
                             end
                         else
