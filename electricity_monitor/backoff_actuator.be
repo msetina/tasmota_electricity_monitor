@@ -175,34 +175,53 @@ class BackoffActuator
                     report_delay = ct_id['report_delay'] * 1000                    
                 end
                 var cv = ct_id.find(self.control_value)
+                var ap_cv = ct_id.find('AvgPwr_Active')
+                var s_cv = ct_id.find('power_sum')
+                if ap_cv != nil
+                    s_cv = ap_cv
+                end
                 if cv != nil
                     #log('emQ: Got control value')
                     if !self.is_on
-                        #log(string.format('emQ: Remote is not on %d + %d',cv,self.power))                        
+                        log(string.format('emQ: Remote is not on %d (%d) + %d',cv,s_cv,self.power))                        
                         if self.last_off_time != nil
                             if (tasmota.millis() - self.last_off_time) > report_delay
                                 cv = cv + self.power
+                                if s_cv != nil
+                                    s_cv = s_cv + self.power
+                                end
                             end
                         else
                             cv = cv + self.power
+                            if s_cv != nil
+                                s_cv = s_cv + self.power
+                            end
                         end
-                        #log(string.format('emQ: Control value is %d',cv))
+                        log(string.format('emQ: Control value is %d. Sum %d',cv,s_cv))
                     end
                     var max_value_ident = self.control_value + '_o_lmt'
                     var min_value_ident = self.control_value + '_u_lmt'
                     var max_value = ct_id.find(max_value_ident)
                     var min_value = ct_id.find(min_value_ident)
+                    var s_max_value = ct_id.find('Sum_o_lmt')
+                    var s_min_value = ct_id.find('Sum_u_lmt')
                     if max_value == nil
                         max_value = 10000000
                     end  
                     if min_value == nil
                         min_value = -10000000
-                    end                 
+                    end    
+                    if s_max_value == nil
+                        s_max_value = 10000000
+                    end  
+                    if s_min_value == nil
+                        s_min_value = -10000000
+                    end              
                     #log('emQ: Checking control value ')  
-                    if (cv >= max_value) && self.check_can_turn_on()                        
+                    if (cv >= max_value || s_cv >= s_max_value) && self.check_can_turn_on()                        
                         return true
                     end
-                    if cv < max_value
+                    if cv < max_value && s_cv < s_max_value
                         if self.check_can_turn_off()                                                     
                             return false
                         end

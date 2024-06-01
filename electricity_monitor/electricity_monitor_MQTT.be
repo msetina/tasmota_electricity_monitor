@@ -78,7 +78,8 @@ class ElectricityMonitorMQTT
     var actuators
     var relay_idents 
     var topics        
-    var set_timestamp   
+    var set_timestamp  
+    var energy_history 
 
     var error
   
@@ -88,7 +89,8 @@ class ElectricityMonitorMQTT
         self.actuators = map()   
         self.topics = map()        
         self.error = list()
-        self.set_timestamp = tasmota.millis()             
+        self.set_timestamp = tasmota.millis()    
+        self.energy_history = map()                 
         self.subscribe_mqtt()        
         self.prep_virt_relays()
         self.prep_actuators()
@@ -175,8 +177,12 @@ class ElectricityMonitorMQTT
                     var nm = met['name'] 
                     var value_keys = nil             
                     var limits = nil 
+                    var energy_keys = nil
                     if met.contains('value_keys')
                         value_keys = met['value_keys']  
+                    end
+                    if met.contains('energy_keys')
+                        energy_keys = met['energy_keys']  
                     end
                     if met.contains('limits')
                         limits = met['limits']  
@@ -202,7 +208,10 @@ class ElectricityMonitorMQTT
                         end
                         if value_keys != nil
                             self.topics[topic]['value_keys'] = value_keys
-                        end    
+                        end
+                        if energy_keys != nil
+                            self.topics[topic]['energy_keys'] = energy_keys
+                        end  
                         if limits != nil
                             self.topics[topic]['limits'] = limits
                         end               
@@ -214,6 +223,77 @@ class ElectricityMonitorMQTT
                 end
             end
         end
+    end
+
+    def get_time_slot()
+        var timer_tp_translation = {'h':'hour','m':'month','dow':'weekday'}
+        var ret = map()
+        var k = tasmota.rtc('local')
+        var current_time = tasmota.time_dump(k)
+        if persist.has('emQ_set')
+            if persist.emQ_set.contains('time_slot_defs')
+                var time_slot_defs = persist.emQ_set['time_slot_defs']                               
+                for timer_tp: time_slot_defs.keys()                    
+                    if timer_tp_translation.contains(timer_tp)
+                        var tm_nm = timer_tp_translation[timer_tp]
+                        if current_time.contains(tm_nm)
+                            var val = current_time[tm_nm]
+                            for slot_nm: time_slot_defs[timer_tp].keys()
+                                for vector: time_slot_defs[timer_tp][slot_nm]
+                                    var start = vector[0]
+                                    var duration = vector[1]
+                                    var diff = val - start                                    
+                                    if diff >= 0 && diff < duration
+                                        ret[timer_tp] = slot_nm
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end                
+            end
+
+        end
+        return ret
+    end
+
+    def get_limit_slot(time_slot)
+        var ret = map()
+        if persist.has('emQ_set')
+            if persist.emQ_set.contains('limit_slot_defs')
+                var limit_slot_defs = persist.emQ_set['limit_slot_defs']   
+                var found = false                            
+                for limit_slot: limit_slot_defs.keys()                                                          
+                    for time_slot_i: limit_slot_defs[limit_slot]
+                        var eq = false                        
+                        for time_tp: time_slot.keys()
+                            if time_slot_i.contains(time_tp)
+                                if time_slot_i[time_tp] == time_slot[time_tp]
+                                    eq = true
+                                else
+                                    eq = false
+                                    break
+                                end
+                            else
+                                eq = false
+                                break
+                            end
+                        end
+                        if eq
+                            found = true
+                            break
+                        end
+                    end
+                    if found
+                        ret['slot'] = limit_slot
+                        break
+                    end
+                end                
+            end
+
+        end
+        return ret
+
     end
 
     def set_generators()                      
@@ -309,10 +389,12 @@ class ElectricityMonitorMQTT
             if val_map.contains('missing')
                 any_missing = any_missing || val_map['missing']
             end
-        end
+        end        
         if max_t > self.set_timestamp                        
             self.set_timestamp = tasmota.millis()             
         end
+        self.data['time_slot'] = self.get_time_slot()
+        self.data['limit_slot'] = self.get_limit_slot(self.data['time_slot'])
     end
   
     #- display sensor value in the web UI -#
@@ -320,24 +402,43 @@ class ElectricityMonitorMQTT
         if !self.data return nil end  #- exit if not initialized -#        
         var msg=''
         for k: self.data.keys()
-            if k == 'Time' continue end
             msg += '{t}'
+            if k == 'Time' continue 
+            elif k=='time_slot'
+                var vm = self.data[k]
+                for nm:vm.keys()
+                    msg += string.format('{s}%s %s{m}%s{e}',k,nm,vm[nm]) 
+                end
+                continue
+            elif k=='limit_slot'
+                var vm = self.data[k]
+                msg += string.format('{s}%s{m}%s{e}',k,vm['slot'])                 
+                continue
+            end    
+            msg += '{t}'        
             var val_map = self.data[k]
             for kk: val_map.keys()
                 var val = val_map[kk]
                 if kk == 'missing' ||
+                    kk == 'Sum_over' ||
+                    kk == 'AvgPwr_over' ||
                     kk == 'Ph1_over' ||
                     kk == 'Ph2_over' ||
                     kk == 'Ph3_over' ||
+                    kk == 'Sum_over_gen' ||
                     kk == 'Ph1_over_gen' ||
                     kk == 'Ph2_over_gen' ||
                     kk == 'Ph3_over_gen' || 
+                    kk == 'Sum_under' ||
+                    kk == 'AvgPwr_under' ||
                     kk == 'Ph1_under' ||
                     kk == 'Ph2_under' || 
                     kk == 'Ph3_under'
                     msg += string.format('{s}%s %s{m}%s{e}',k,kk,val?'True':'False')   
-                elif kk=='last' || kk=='time_delta'
-                    msg += string.format('{s}%s %s{m}%s ms{e}',k,kk,val)   
+                elif kk=='last' || kk=='time_delta' || kk=='Energy_d_tm'
+                    msg += string.format('{s}%s %s{m}%s ms{e}',k,kk,val)  
+                elif kk=='Energy_d_Active'
+                    msg += string.format('{s}%s %s{m}%s kWh{e}',k,kk,val)                   
                 else
                     msg += string.format('{s}%s %s{m}%.2f W{e}',k,kk,val)
                 end
@@ -391,11 +492,51 @@ class ElectricityMonitorMQTT
                     nm = tpk["name"]
                 end
                 var pwr_data = map()
+                if tpk.contains('energy_keys')
+                    var ev = tpk['energy_keys']     
+                    var energy_window = 900000
+                    var hour_to_ms = 3600000
+                    var val_map = map()                    
+                    var ts = tasmota.millis()
+                    var time_dlt = 0
+                    if !self.energy_history.contains(nm)
+                        self.energy_history[nm] = list()
+                    end                    
+                    #log(string.format("History size: %d",size(self.energy_history[nm])))
+                    if size(self.energy_history[nm]) >0 
+                        time_dlt = ts - self.energy_history[nm][0]['tm']
+                    end
+                    val_map['tm'] = ts                            
+                    for e: ev.keys()                    
+                        var energy = payload_json.find(e)                        
+                        #log(string.format("Energy: %s %d %d %d",e,energy,time_dlt,energy_window))
+                        if energy != nil
+                            var et = ev[e]                           
+                            val_map[et] = energy
+                        end                        
+                    end
+                    if time_dlt >= energy_window
+                        var prev = self.energy_history[nm].pop(0)
+                        for tt:prev.keys()
+                            pwr_data['Energy_d_' + tt] = val_map[tt]-prev[tt]
+                        end
+                        var tm = pwr_data.find('Energy_d_tm')
+                        var c = pwr_data.find('Energy_d_Active')    
+                        #log(string.format('diff: %d %d',tm,c))                    
+                        pwr_data['AvgPwr_Active'] = (1000*c*hour_to_ms)/tm
+                    end
+                    self.energy_history[nm].push(val_map)
+                end
                 if tpk.contains('value_keys')
                     var kv = tpk['value_keys']
                     var lmt = nil
                     if tpk.contains('limits')
-                        lmt = tpk['limits']
+                        lmt = tpk['limits']                       
+                    end
+                    var limit_slot = nil
+                    var limit_slot_data = self.data.find('limit_slot')
+                    if limit_slot_data != nil
+                        limit_slot = limit_slot_data['slot']
                     end
                     var sum = 0
                     var delta_sum = 0
@@ -403,32 +544,45 @@ class ElectricityMonitorMQTT
                         var value = payload_json.find(k)
                         if value != nil
                             var t = kv[k]
-                            if lmt != nil           
-                                if lmt.contains(t) && lmt[t].contains("max")
-                                    var max = lmt[t]["max"]
-                                    pwr_data[t + '_o_lmt'] = max
-                                    if value > max
-                                        pwr_data[t + '_over']=true
-                                    else
-                                        pwr_data[t + '_over']=false 
-                                    end
+                            if lmt != nil && lmt.contains(t) 
+                                var all = lmt[t].find('*')
+                                var slot_lmt = nil
+                                if limit_slot != nil
+                                    slot_lmt = lmt[t].find(limit_slot)                                                        
                                 end
-                                if lmt.contains(t) && lmt[t].contains("max_gen")
-                                    var max_gen = lmt[t]["max_gen"]
-                                    pwr_data[t + '_o_g_lmt'] = max_gen
-                                    if value < 0 && (-1*value) > max_gen
-                                        pwr_data[t + '_over_gen']=true
-                                    else
-                                        pwr_data[t + '_over_gen']=false 
-                                    end
+                                var local_lmt = nil
+                                if all != nil
+                                    local_lmt = all
+                                elif slot_lmt != nil
+                                    local_lmt = slot_lmt
                                 end
-                                if lmt.contains(t) && lmt[t].contains("min")
-                                    var min = lmt[t]["min"]     
-                                    pwr_data[t + '_u_lmt'] = min                                                                   
-                                    if value < min
-                                        pwr_data[t + '_under']=true
-                                    else
-                                        pwr_data[t + '_under']=false 
+                                if local_lmt != nil
+                                    if  local_lmt.contains("max")
+                                        var max = local_lmt["max"]
+                                        pwr_data[t + '_o_lmt'] = max
+                                        if value > max
+                                            pwr_data[t + '_over']=true
+                                        else
+                                            pwr_data[t + '_over']=false 
+                                        end
+                                    end
+                                    if local_lmt.contains("max_gen")
+                                        var max_gen = local_lmt["max_gen"]
+                                        pwr_data[t + '_o_g_lmt'] = max_gen
+                                        if value < 0 && (-1*value) > max_gen
+                                            pwr_data[t + '_over_gen']=true
+                                        else
+                                            pwr_data[t + '_over_gen']=false 
+                                        end
+                                    end
+                                    if local_lmt.contains("min")
+                                        var min = local_lmt["min"]     
+                                        pwr_data[t + '_u_lmt'] = min                                                                   
+                                        if value < min
+                                            pwr_data[t + '_under']=true
+                                        else
+                                            pwr_data[t + '_under']=false 
+                                        end
                                     end
                                 end
                             end
@@ -447,10 +601,63 @@ class ElectricityMonitorMQTT
                     end  
                     pwr_data["power_sum"] = sum     
                     pwr_data["power_sum_delta"] = delta_sum  
+                    var run_avg = pwr_data.find('AvgPwr_Active')
+                    if lmt != nil && lmt.contains('Sum') 
+                        var s_all = lmt['Sum'].find('*')
+                        var s_slot = nil
+                        if limit_slot != nil
+                            s_slot = lmt['Sum'].find(limit_slot)                                                        
+                        end
+                        var s_local_lmt = nil
+                        if s_all != nil
+                            s_local_lmt = s_all
+                        elif s_slot != nil
+                            s_local_lmt = s_slot
+                        end
+                        if s_local_lmt != nil
+                            if  s_local_lmt.contains("max")
+                                var max = s_local_lmt["max"]
+                                pwr_data['Sum_o_lmt'] = max
+                                if sum > max
+                                    pwr_data['Sum_over']=true
+                                else
+                                    pwr_data['Sum_over']=false 
+                                end
+                                if run_avg != nil && run_avg > max
+                                    pwr_data['AvgPwr_over']=true
+                                else
+                                    pwr_data['AvgPwr_over']=false 
+                                end
+                            end
+                            if s_local_lmt.contains("max_gen")
+                                var max_gen = s_local_lmt["max_gen"]
+                                pwr_data['Sum_o_g_lmt'] = max_gen
+                                if sum < 0 && (-1*sum) > max_gen
+                                    pwr_data['Sum_over_gen']=true
+                                else
+                                    pwr_data['Sum_over_gen']=false 
+                                end
+                            end
+                            if s_local_lmt.contains("min")
+                                var min = s_local_lmt["min"]     
+                                pwr_data['Sum_u_lmt'] = min                                                                   
+                                if sum < min
+                                    pwr_data['Sum_under']=true
+                                else
+                                    pwr_data['Sum_under']=false 
+                                end
+                                if run_avg != nil && run_avg < min
+                                    pwr_data['AvgPwr_under']=true
+                                else
+                                    pwr_data['AvgPwr_under']=false 
+                                end
+                            end
+                        end
+                    end
                     var current = tasmota.millis()  
                     var time_delta = 1000000000
-                    if pwr_data.contains("last")   
-                        time_delta = current - pwr_data["last"]
+                    if self.data.contains(nm) && self.data[nm].contains('last')   
+                        time_delta = current - self.data[nm]['last']
                     else
                         time_delta = current - tpk["subscription"]
                     end   
@@ -463,7 +670,7 @@ class ElectricityMonitorMQTT
                         var report_delay = tpk['report_delay']                        
                         pwr_data["report_delay"] = report_delay                          
                     end
-                    pwr_data["last"] = current  
+                    pwr_data['last'] = current  
                     self.data[nm] = pwr_data
                     try
                         self.set_consumers(nm)
@@ -494,11 +701,15 @@ class ElectricityMonitorMQTT
         if topic == persist.emQ_set_topic         
             var meters
             var actuators
-            try
-                var payload_json = json.load(data)
+            var time_slot_defs
+            var limit_slot_defs
+            try                
+                var payload_json = json.load(data)               
                 if payload_json != nil 
                     meters = payload_json.find('meters')                    
                     actuators = payload_json.find('actuators')                          
+                    time_slot_defs = payload_json.find('time_slot_defs')  
+                    limit_slot_defs = payload_json.find('limit_slot_defs') 
                 else
                     if data == "do_restart"
                         tasmota.cmd('Restart 1')
@@ -550,6 +761,14 @@ class ElectricityMonitorMQTT
                                 persist.emQ_set['actuators'].push(new_act)                                
                             end 
                         end                        
+                    end
+                    if time_slot_defs != nil
+                        log("emQ: Received time slot definitions")
+                        persist.emQ_set['time_slot_defs'] = time_slot_defs 
+                    end
+                    if limit_slot_defs != nil
+                        log("emQ: Received limit slot definitions")
+                        persist.emQ_set['limit_slot_defs'] = limit_slot_defs 
                     end
          
                     # save to _persist.json
