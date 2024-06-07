@@ -2,9 +2,9 @@ import string
 import mqtt
 import json
 
-var backoff_actuator = module('backoff_actuator')
+var activate_actuator = module('activate_actuator')
 
-class BackoffActuator   
+class ActivateActuator   
     var name 
     var relays
     var alloff_id       
@@ -30,7 +30,7 @@ class BackoffActuator
         if settings.contains('name')   
             self.name = settings['name']
         else
-            self.name = string.format('BackoffActuator')
+            self.name = string.format('ActivateActuator')
         end
         if settings.contains('relays')                 
             self.relays = settings['relays']
@@ -249,11 +249,11 @@ class BackoffActuator
     end
 
     def check_turn_on(cv,max_value)
-        if (cv >= max_value ) && self.check_can_turn_on()                        
-            log(string.format('emQ: (actuator %s) Control value is bigger than its limit %d',self.name,max_value)) 
+        if (cv < max_value ) && self.check_can_turn_on()                        
+            log(string.format('emQ: (actuator %s) Control value is smaller than its limit %d',self.name,max_value)) 
             return true
         end
-        if cv < max_value 
+        if cv >= max_value 
             if self.check_can_turn_off()                                                     
                 return false
             end
@@ -262,16 +262,16 @@ class BackoffActuator
     end
 
     def check_turn_on_w_sum(cv,max_value,s_cv,s_max_value)
-        if (cv >= max_value || s_cv >= s_max_value) && self.check_can_turn_on()    
-            if cv >= max_value
-                log(string.format('emQ: (actuator %s) Control value is bigger than its limit %d',self.name,max_value))  
+        if (cv < max_value || s_cv < s_max_value) && self.check_can_turn_on()    
+            if cv < max_value
+                log(string.format('emQ: (actuator %s) Control value is smaller than its limit %d',self.name,max_value))  
             end  
-            if s_cv >= s_max_value
-                log(string.format('emQ: (actuator %s) Cumulative control value is bigger than its limit %d',self.name,s_max_value))  
+            if s_cv < s_max_value
+                log(string.format('emQ: (actuator %s) Cumulative control value is smaller than its limit %d',self.name,s_max_value))  
             end                    
             return true
         end
-        if cv < max_value && s_cv < s_max_value
+        if cv >= max_value && s_cv >= s_max_value
             if self.check_can_turn_off()                                                     
                 return false
             end
@@ -324,5 +324,5 @@ class BackoffActuator
 end
 
 
-backoff_actuator.actuator = BackoffActuator
-return backoff_actuator
+activate_actuator.actuator = ActivateActuator
+return activate_actuator

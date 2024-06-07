@@ -6,6 +6,7 @@
  import mqtt
  import string 
  import backoff_actuator
+ import activate_actuator
 
 
   #-A command supporting setup of electricity monitor driver. It takes a JSON defining electricoty MQTT subscriptions in a list,
@@ -131,41 +132,32 @@ class ElectricityMonitorMQTT
 
     def prep_actuators()
         if persist.has('emQ_set') && persist.emQ_set.contains('actuators')            
-            var generator_cnt = 0
-            var consumer_cnt = 0
             var actuator_cnt = size(persist.emQ_set['actuators'])
             for act: persist.emQ_set['actuators']                
                 if act.contains('name')
                     var nm = act['name']
-                    var run_id
-                    var backoff_id
-                    var alloff_id
-                    if act.contains('run_name')
-                        var run_nm = act['run_name']
-                        if self.relay_idents.contains(run_nm)
-                            run_id = self.relay_idents[run_nm]
-                        end
-                    end
-                    if act.contains('backoff_name')
-                        var backoff_nm = act['backoff_name']
-                        if self.relay_idents.contains(backoff_nm)
-                            backoff_id = self.relay_idents[backoff_nm]
-                        end
-                    end
+                    var alloff_id                    
                     if self.relay_idents.contains('All off')
                         alloff_id = self.relay_idents['All off']
                     end                    
                     if act.contains('type')
-                        if act['type'] == 'generator'
-                            generator_cnt += 1  
-                        elif act['type'] == 'consumer'  
-                            consumer_cnt += 1                                                            
+                        var a_tp = act['type']
+                        if a_tp == 'backoff'
+                            self.actuators[nm] = backoff_actuator.actuator(act,alloff_id) 
+                            log(string.format("emQ: Actuator %s of type %s loaded.",nm,a_tp))      
+                            actuator_cnt -= 1
+                        elif a_tp == 'activate'  
+                            self.actuators[nm] = activate_actuator.actuator(act,alloff_id)      
+                            log(string.format("emQ: Actuator %s of type %s loaded.",nm,a_tp))   
+                            actuator_cnt -= 1   
+                        else
+                            log(string.format("emQ: Actuator %s has unknown type %s .",nm,a_tp))                                                
                         end
                     end     
-                                   
-                    self.actuators[nm] = backoff_actuator.actuator(act,alloff_id)                                    
-                    actuator_cnt -= 1
                 end
+            end
+            if actuator_cnt > 0
+                log(string.format("emQ: There is %d actuators left not loaded",actuator_cnt))  
             end
         end
     end
@@ -175,28 +167,14 @@ class ElectricityMonitorMQTT
             for met: persist.emQ_set['meters'] 
                 if met.contains('name')  
                     var nm = met['name'] 
-                    var value_keys = nil             
-                    var limits = nil 
-                    var energy_keys = nil
-                    if met.contains('value_keys')
-                        value_keys = met['value_keys']  
-                    end
-                    if met.contains('energy_keys')
-                        energy_keys = met['energy_keys']  
-                    end
-                    if met.contains('limits')
-                        limits = met['limits']  
-                    end
-                    var publish_period = nil              
-                    if met.contains('publish_period')
-                        publish_period = met['publish_period']
-                    end
-                    var report_delay = nil
-                    if met.contains('report_delay')
-                        report_delay = met['report_delay']                        
-                    end
-                    if met.contains('topic')
-                        var topic = met['topic']
+                    var value_keys = met.find('value_keys')          
+                    var limits = met.find('limits')
+                    var energy_keys = met.find('energy_keys')
+                    var minutes_for_average = met.find('minutes_for_average')
+                    var publish_period = met.find('publish_period')
+                    var report_delay = met.find('report_delay')                    
+                    var topic = met.find('topic')
+                    if topic != nil                        
                         if !self.topics.contains(topic)
                             self.topics[topic] = map()
                         end
@@ -214,15 +192,49 @@ class ElectricityMonitorMQTT
                         end  
                         if limits != nil
                             self.topics[topic]['limits'] = limits
-                        end               
+                        end    
+                        if minutes_for_average != nil
+                            self.topics[topic]['minutes_for_average'] = minutes_for_average
+                            log(string.format("emQ: Got time for sliding average length from setup: %d min",minutes_for_average))                            
+                        end            
                         self.topics[topic]["name"] = nm
                         self.topics[topic]["subscription"] = tasmota.millis()
                         mqtt.subscribe(topic)
-                        log('emQ: Subscribed ' + topic)            
+                        log('emQ: Subscribed ' + topic)  
+                    else
+                        log(string.format("emQ: Meter %s has no topic set.",nm))
                     end                    
                 end
             end
         end
+    end
+
+    def check_holiday(current_time)        
+        if persist.has('emQ_set') && persist.emQ_set.contains('holidays')
+            var holidays = persist.emQ_set['holidays']
+            for hldy : holidays
+                var found = false
+                for hldy_prt_nm : hldy.keys()
+                    if current_time.contains(hldy_prt_nm)
+                        if current_time[hldy_prt_nm] == hldy[hldy_prt_nm]
+                            found = true
+                        else
+                            found = false
+                            break                                                    
+                        end
+                    else
+                        found = false
+                        break
+                    end
+                end
+                if found == true
+                    return true
+                else
+                    continue
+                end
+            end
+        end
+        return false
     end
 
     def get_time_slot()
@@ -231,6 +243,7 @@ class ElectricityMonitorMQTT
         var k = tasmota.rtc('local')
         var current_time = tasmota.time_dump(k)
         if persist.has('emQ_set')
+            ret["hol"] =  self.check_holiday(current_time)                
             if persist.emQ_set.contains('time_slot_defs')
                 var time_slot_defs = persist.emQ_set['time_slot_defs']                               
                 for timer_tp: time_slot_defs.keys()                    
@@ -258,23 +271,23 @@ class ElectricityMonitorMQTT
     end
 
     def get_limit_slot(time_slot)
-        var ret = map()
+        var ret = map()        
         if persist.has('emQ_set')
-            if persist.emQ_set.contains('limit_slot_defs')
+            if persist.emQ_set.contains('limit_slot_defs')                
                 var limit_slot_defs = persist.emQ_set['limit_slot_defs']   
-                var found = false                            
-                for limit_slot: limit_slot_defs.keys()                                                          
-                    for time_slot_i: limit_slot_defs[limit_slot]
+                var found = false                                  
+                for limit_slot: limit_slot_defs.keys()                                                                            
+                    for time_slot_i: limit_slot_defs[limit_slot]                        
                         var eq = false                        
-                        for time_tp: time_slot.keys()
-                            if time_slot_i.contains(time_tp)
+                        for time_tp: time_slot_i.keys()
+                            if time_slot.contains(time_tp)
                                 if time_slot_i[time_tp] == time_slot[time_tp]
                                     eq = true
-                                else
+                                else                                    
                                     eq = false
                                     break
                                 end
-                            else
+                            else                                
                                 eq = false
                                 break
                             end
@@ -294,15 +307,6 @@ class ElectricityMonitorMQTT
         end
         return ret
 
-    end
-
-    def set_generators()                      
-        if persist.has('emQ_set')
-            for k :self.actuators.keys()
-                var act = self.actuators[k]
-                act.control_actuator(self.data)                
-            end
-        end
     end
 
     def set_consumers(name)                      
@@ -407,12 +411,18 @@ class ElectricityMonitorMQTT
             elif k=='time_slot'
                 var vm = self.data[k]
                 for nm:vm.keys()
-                    msg += string.format('{s}%s %s{m}%s{e}',k,nm,vm[nm]) 
+                    if nm == 'hol'
+                        msg += string.format('{s}%s %s{m}%s{e}',k,nm,vm[nm]?'True':'False')
+                    else
+                        msg += string.format('{s}%s %s{m}%s{e}',k,nm,vm[nm]) 
+                    end
                 end
                 continue
             elif k=='limit_slot'
                 var vm = self.data[k]
-                msg += string.format('{s}%s{m}%s{e}',k,vm['slot'])                 
+                if vm.contains('slot')
+                    msg += string.format('{s}%s{m}%s{e}',k,vm['slot'])                 
+                end
                 continue
             end    
             msg += '{t}'        
@@ -437,6 +447,8 @@ class ElectricityMonitorMQTT
                     msg += string.format('{s}%s %s{m}%s{e}',k,kk,val?'True':'False')   
                 elif kk=='last' || kk=='time_delta' || kk=='Energy_d_tm'
                     msg += string.format('{s}%s %s{m}%s ms{e}',k,kk,val)  
+                elif kk=='report_delay'
+                    msg += string.format('{s}%s %s{m}%s s{e}',k,kk,val)  
                 elif kk=='Energy_d_Active'
                     msg += string.format('{s}%s %s{m}%s kWh{e}',k,kk,val)                   
                 else
@@ -493,9 +505,11 @@ class ElectricityMonitorMQTT
                 end
                 var pwr_data = map()
                 if tpk.contains('energy_keys')
-                    var ev = tpk['energy_keys']     
-                    var energy_window = 900000
+                    var ev = tpk['energy_keys']                                             
                     var hour_to_ms = 3600000
+                    var mins_4_avg = tpk.find('minutes_for_average')                    
+                    if mins_4_avg == nil mins_4_avg=15 end
+                    var energy_window = mins_4_avg * hour_to_ms / 60                    
                     var val_map = map()                    
                     var ts = tasmota.millis()
                     var time_dlt = 0
@@ -536,7 +550,9 @@ class ElectricityMonitorMQTT
                     var limit_slot = nil
                     var limit_slot_data = self.data.find('limit_slot')
                     if limit_slot_data != nil
-                        limit_slot = limit_slot_data['slot']
+                        if limit_slot_data.contains('slot')
+                            limit_slot = limit_slot_data['slot']   
+                        end
                     end
                     var sum = 0
                     var delta_sum = 0
@@ -674,8 +690,7 @@ class ElectricityMonitorMQTT
                     self.data[nm] = pwr_data
                     try
                         self.set_consumers(nm)
-                    except .. as e1,m1
-                        if size(self.error) > 5 self.error.pop() end
+                    except .. as e1,m1                        
                         self.error_push('MQTT data consumer error:' + m1)
                     end
                     ret = true                 
@@ -703,6 +718,7 @@ class ElectricityMonitorMQTT
             var actuators
             var time_slot_defs
             var limit_slot_defs
+            var holidays
             try                
                 var payload_json = json.load(data)               
                 if payload_json != nil 
@@ -710,6 +726,7 @@ class ElectricityMonitorMQTT
                     actuators = payload_json.find('actuators')                          
                     time_slot_defs = payload_json.find('time_slot_defs')  
                     limit_slot_defs = payload_json.find('limit_slot_defs') 
+                    holidays = payload_json.find('holidays') 
                 else
                     if data == "do_restart"
                         tasmota.cmd('Restart 1')
@@ -769,6 +786,10 @@ class ElectricityMonitorMQTT
                     if limit_slot_defs != nil
                         log("emQ: Received limit slot definitions")
                         persist.emQ_set['limit_slot_defs'] = limit_slot_defs 
+                    end
+                    if holidays != nil
+                        log("emQ: Received holidays")
+                        persist.emQ_set['holidays'] = holidays 
                     end
          
                     # save to _persist.json
