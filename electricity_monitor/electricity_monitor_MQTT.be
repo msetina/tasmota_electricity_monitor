@@ -535,6 +535,8 @@ class ElectricityMonitorMQTT
                 end
                 if !self.data.contains(nm)
                     data_stubs[nm] = map()
+                    data_stubs[nm]['Binary'] = map()
+                    data_stubs[nm]['Power'] = map()
                     var nms = ['missing','power_sum','power_sum_delta']
                     for vk:vks.keys()
                         if stubs['values'].contains(vk)
