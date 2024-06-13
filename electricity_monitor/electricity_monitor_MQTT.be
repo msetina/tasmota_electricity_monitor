@@ -8,6 +8,53 @@
  import backoff_actuator
  import activate_actuator
 
+ var sensors = {
+ 'missing':{'parent':'Binary','tag':'Missing'},
+ 'Sum_over':{'parent':'Binary','tag':'SumOvr'},
+ 'Sum_under':{'parent':'Binary','tag':'SumUnd'},
+ 'Sum_over_gen':{'parent':'Binary','tag':'SumGenOvr'},
+ 'Sum_o_lmt':{'parent':'Power','tag':'SumOvrLmt'},
+ 'Sum_u_lmt':{'parent':'Power','tag':'SumUndLmt'},
+ 'Sum_o_g_lmt':{'parent':'Power','tag':'SumGenOvrLmt'},
+ 'AvgPwr_over':{'parent':'Binary','tag':'AvgPwrOvr'}, 
+ 'AvgPwr_under':{'parent':'Binary','tag':'AvgPwrUnd'},
+ 'power_sum':{'parent':'Power','tag':'PwrSum'},
+ 'AvgPwr_Active':{'parent':'Power','tag':'AvgPwr'},
+ 'Ph1_over':{'parent':'Binary','tag':'Ph1Ovr'},
+ 'Ph2_over':{'parent':'Binary','tag':'Ph2Ovr'},
+ 'Ph3_over':{'parent':'Binary','tag':'Ph3Ovr'},
+ 'Ph1_over_gen':{'parent':'Binary','tag':'Ph1GenOvr'},
+ 'Ph2_over_gen':{'parent':'Binary','tag':'Ph2GenOvr'},
+ 'Ph3_over_gen':{'parent':'Binary','tag':'Ph3GenOvr'},
+ 'Ph1_under':{'parent':'Binary','tag':'Ph1Und'},
+ 'Ph2_under':{'parent':'Binary','tag':'Ph2Und'},
+ 'Ph3_under':{'parent':'Binary','tag':'Ph3Und'}, 
+ 'Ph1':{'parent':'Power','tag':'Ph1'},
+ 'Ph2':{'parent':'Power','tag':'Ph2'},
+ 'Ph3':{'parent':'Power','tag':'Ph3'},
+ 'Ph2_u_lmt':{'parent':'Power','tag':'Ph2UndLmt'},
+ 'Ph3_u_lmt':{'parent':'Power','tag':'Ph3UndLmt'},
+ 'Ph1_u_lmt':{'parent':'Power','tag':'Ph1UndLmt'}, 
+ 'power_sum_delta':{'parent':'Power','tag':'PwrSumDlt'}, 
+ 'Ph1_o_g_lmt':{'parent':'Power','tag':'Ph1GenOvrLmt'},
+ 'Ph2_o_g_lmt':{'parent':'Power','tag':'Ph2GenOvrLmt'},
+ 'Ph3_o_g_lmt':{'parent':'Power','tag':'Ph3GenOvrLmt'},
+ 'Ph3_gen':{'parent':'Power','tag':'Ph3Gen'},
+ 'Ph2_gen':{'parent':'Power','tag':'Ph2Gen'},
+ 'Ph1_gen':{'parent':'Power','tag':'Ph1Gen'},
+ 'Ph1_o_lmt':{'parent':'Power','tag':'Ph1OvrLmt'},
+ 'Ph2_o_lmt':{'parent':'Power','tag':'Ph2OvrLmt'},
+ 'Ph3_o_lmt':{'parent':'Power','tag':'Ph3OvrLmt'} }
+
+ var stubs = {
+    'values':{'Ph1':['Ph1','Ph1_gen'],
+                'Ph2':['Ph2','Ph2_gen'],
+                'Ph3':['Ph3','Ph3_gen']},
+    'limits':{'Ph1':['Ph1_under','Ph1_over','Ph1_over_gen','Ph1_o_lmt','Ph1_u_lmt','Ph1_o_g_lmt'],
+            'Ph2':['Ph2_under','Ph2_over','Ph2_over_gen','Ph2_o_lmt','Ph2_u_lmt','Ph2_o_g_lmt'],
+            'Ph3':['Ph3_under','Ph3_over','Ph3_over_gen','Ph3_o_lmt','Ph3_u_lmt','Ph3_o_g_lmt'],
+            'Sum':['Sum_under','Sum_over_gen','Sum_over','Sum_o_g_lmt','Sum_o_lmt','Sum_u_lmt']}
+ }
 
   #-A command supporting setup of electricity monitor driver. It takes a JSON defining electricoty MQTT subscriptions in a list,
  -#
@@ -403,7 +450,7 @@ class ElectricityMonitorMQTT
   
     #- display sensor value in the web UI -#
     def web_sensor()
-        if !self.data return nil end  #- exit if not initialized -#        
+        if !self.data return nil end  #- exit if not initialized -#   
         var msg=''
         for k: self.data.keys()
             msg += '{t}'
@@ -463,26 +510,126 @@ class ElectricityMonitorMQTT
     end    
 
     #- add sensor value to teleperiod -#
-    # def json_append()
-    #     if !self.data return nil end  #- exit if not initialized -#   
-    #     var msg = ''            
-    #     var cnt = 0
-    #     for k: self.data.keys()
-    #         if k == 'Time' continue end
-    #         var sens = map()
-    #         sens['Power'] = map()                        
-    #         for sk: self.data[k].keys()                              
-    #             if sk == 'Target energy'
-    #                 sens['Power']['Total'] = self.data[k][sk]/1000
-    #             elif sk =='Energy for output'
-    #                 sens['Power']['ForOutput'] = self.data[k][sk]/1000
-    #             else
-    #                 sens[sk] = self.data[k][sk]
-    #             end                
-    #         end            
-    #     end                  
-    #     tasmota.response_append(msg)
-    # end
+    def json_append()
+        if !self.data return nil end  #- exit if not initialized -#   
+        if !self.data.contains('time_slot')     
+            self.data['time_slot'] = self.get_time_slot()
+            self.data['limit_slot'] = self.get_limit_slot(self.data['time_slot'])
+        end
+        var data_stubs = map()
+        if self.topics != nil
+            for t: self.topics.keys()
+                var tpk = self.topics[t]
+                var nm = "Unknown"
+                if tpk.contains("name")
+                    nm = tpk["name"]
+                end
+                var is_eks = tpk.contains("energy_keys")
+                var vks = map()
+                if tpk.contains("value_keys")
+                    vks = tpk["value_keys"]
+                end
+                var lmts = map()
+                if tpk.contains("limits")
+                    lmts = tpk["limits"]
+                end
+                if !self.data.contains(nm)
+                    data_stubs[nm] = map()
+                    var nms = ['missing','power_sum','power_sum_delta']
+                    for vk:vks.keys()
+                        if stubs['values'].contains(vk)
+                            nms = nms + stubs['values'][vk]
+                        end
+                    end
+                    for lmt:lmts.keys()
+                        if stubs['limits'].contains(lmt)
+                            nms = nms + stubs['limits'][lmt]
+                        end
+                    end
+                    if is_eks
+                        nms = nms + ['AvgPwr_over','AvgPwr_under','AvgPwr_Active']                        
+                    end
+                    for nn:nms
+                        if sensors.contains(nn)
+                            var sens_def = sensors[nn]
+                            if sens_def.contains('tag')
+                                var tg = sens_def['tag']
+                                if sens_def.contains('parent')
+                                    var prnt = sens_def['parent']
+                                    if prnt == 'Binary'
+                                        data_stubs[nm][prnt][tg] = 'OFF'
+                                    else
+                                        data_stubs[nm][prnt][tg] = 0
+                                    end
+                                else
+                                    data_stubs[nm][tg] = 'Unknown'
+                                end  
+                            else
+                                continue
+                            end  
+                            
+                        end
+                    end
+                end
+            end
+        end
+        var msg = ''
+        var vals = map()
+        for k: self.data.keys()
+            if k == 'Time' continue
+            elif k=='time_slot'
+                var vm = self.data[k]                
+                for nm:vm.keys()
+                    if nm == 'hol'                        
+                        vals['Hldy'] = vm[nm]?'Yes':'No' 
+                    else                        
+                        vals[nm] = vm[nm] 
+                    end
+                end                
+                continue
+            elif k=='limit_slot'
+                var vm = self.data[k]
+                if vm.contains('slot')
+                    vals["LmtSlt"] = vm['slot']
+                end                
+                continue
+            end    
+            var sens = map()
+            sens['Binary'] = map()  
+            sens['Power'] = map()              
+            var val_map = self.data[k]    
+            sens['Id'] = k                  
+            for kk: val_map.keys()     
+                var val = val_map[kk]
+                if sensors.contains(kk)
+                    var sens_def = sensors[kk]
+                    if sens_def.contains('tag')
+                        var tg = sens_def['tag']
+                        if sens_def.contains('parent')
+                            var prnt = sens_def['parent']
+                            if prnt == 'Binary'
+                                sens[prnt][tg] = val?'ON':'OFF'
+                            else
+                                sens[prnt][tg] = val
+                            end
+                        else
+                            sens[tg] = val
+                        end  
+                    else
+                        continue
+                    end  
+                else
+                    continue
+                end                        
+            end   
+            msg += string.format(',"%sMeter":%s', k,json.dump(sens))         
+        end  
+        for stb: data_stubs.keys()
+            msg += string.format(',"%sMeter":%s', stb,json.dump(data_stubs[stb]))
+        end
+        msg += string.format(',"TCpsl":%s',json.dump(vals))                  
+        tasmota.response_append(msg)
+    end
 
     def mqtt_data(topic, idx, data, databytes)
         var ret = false
