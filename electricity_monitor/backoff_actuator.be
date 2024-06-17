@@ -86,6 +86,12 @@ class BackoffActuator
         self.alloff_id = alloff_id
     end
 
+    def get_active_power()
+        if self.is_on
+            return self.power
+        end
+        return 0
+    end
 
     def turn_off()
         log('emQ: Turning off')
@@ -129,16 +135,19 @@ class BackoffActuator
         self.off_milis = nil        
     end
 
-    def control_actuator(data)
-        var new_state = self.calc_new_state(data)
+    def control_actuator(data,future)
+        var ret = 0
+        var new_state = self.calc_new_state(data,future)
         if self.prev_state != new_state
             if new_state
                 self.turn_on()
+                ret = self.power
             else
                 self.turn_off()
             end
             self.prev_state = new_state
         end
+        return ret
     end
 
     def check_can_turn_on()
@@ -168,7 +177,7 @@ class BackoffActuator
         end
     end
 
-    def calc_new_state(data)        
+    def calc_new_state(data,future)        
         #log('emQ: Calculating new state')        
         var outputs = tasmota.get_power()        
         if self.check_needs_turn_off()                            
@@ -186,6 +195,7 @@ class BackoffActuator
                     report_delay = ct_id['report_delay'] * 1000                    
                 end
                 var cv = ct_id.find(self.control_value)
+                var f_cv = future.find(self.control_value)                
                 var ap_cv = ct_id.find('AvgPwr_Active')
                 var s_cv = ct_id.find('power_sum')
                 if ap_cv != nil
@@ -194,7 +204,13 @@ class BackoffActuator
                 if cv != nil
                     #log('emQ: Got control value')
                     if !self.is_on
-                        #log(string.format('emQ: Remote is not on %d (%d) + %d',cv,s_cv,self.power))                        
+                        #log(string.format('emQ: Remote is not on %d (%d) + %d',cv,s_cv,self.power))  
+                        if f_cv != nil
+                            cv += f_cv
+                            if s_cv != nil
+                                s_cv += f_cv
+                            end
+                        end                      
                         if self.last_off_time != nil
                             if (tasmota.millis() - self.last_off_time) > report_delay
                                 cv = cv + self.power
