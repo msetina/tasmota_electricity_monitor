@@ -177,81 +177,88 @@ class ElectricityMonitorMQTT
         end
     end  
 
+    def load_actuator(act)
+        if act.contains('name')
+            var nm = act['name']
+            var alloff_id                    
+            if self.relay_idents.contains('All off')
+                alloff_id = self.relay_idents['All off']
+            end                    
+            if act.contains('type')
+                var a_tp = act['type']
+                if a_tp == 'backoff'
+                    self.actuators[nm] = backoff_actuator.actuator(act,alloff_id) 
+                    log(string.format("emQ: Actuator %s of type %s loaded.",nm,a_tp))                          
+                elif a_tp == 'activate'  
+                    self.actuators[nm] = activate_actuator.actuator(act,alloff_id)      
+                    log(string.format("emQ: Actuator %s of type %s loaded.",nm,a_tp))                       
+                else
+                    log(string.format("emQ: Actuator %s has unknown type %s .",nm,a_tp))                                                
+                end
+            else
+                log(string.format("emQ: Actuator %s doas not have a type.",nm))   
+            end    
+        else
+            log("emQ: We found an actuator without a name. It can not be loaded.")
+        end
+    end
+
     def prep_actuators()
         if persist.has('emQ_set') && persist.emQ_set.contains('actuators')            
             var actuator_cnt = size(persist.emQ_set['actuators'])
             for act: persist.emQ_set['actuators']                
-                if act.contains('name')
-                    var nm = act['name']
-                    var alloff_id                    
-                    if self.relay_idents.contains('All off')
-                        alloff_id = self.relay_idents['All off']
-                    end                    
-                    if act.contains('type')
-                        var a_tp = act['type']
-                        if a_tp == 'backoff'
-                            self.actuators[nm] = backoff_actuator.actuator(act,alloff_id) 
-                            log(string.format("emQ: Actuator %s of type %s loaded.",nm,a_tp))      
-                            actuator_cnt -= 1
-                        elif a_tp == 'activate'  
-                            self.actuators[nm] = activate_actuator.actuator(act,alloff_id)      
-                            log(string.format("emQ: Actuator %s of type %s loaded.",nm,a_tp))   
-                            actuator_cnt -= 1   
-                        else
-                            log(string.format("emQ: Actuator %s has unknown type %s .",nm,a_tp))                                                
-                        end
-                    end     
+                self.load_actuator(act)
+            end
+        end
+    end
+
+    def load_meter(met)
+        if met.contains('name')  
+            var nm = met['name'] 
+            var value_keys = met.find('value_keys')          
+            var limits = met.find('limits')
+            var energy_keys = met.find('energy_keys')
+            var minutes_for_average = met.find('minutes_for_average')
+            var publish_period = met.find('publish_period')
+            var report_delay = met.find('report_delay')                    
+            var topic = met.find('topic')
+            if topic != nil                        
+                if !self.topics.contains(topic)
+                    self.topics[topic] = map()
                 end
-            end
-            if actuator_cnt > 0
-                log(string.format("emQ: There is %d actuators left not loaded",actuator_cnt))  
-            end
+                if publish_period != nil
+                    self.topics[topic]['period'] = publish_period
+                end
+                if report_delay != nil
+                    self.topics[topic]['report_delay'] = report_delay                            
+                end
+                if value_keys != nil
+                    self.topics[topic]['value_keys'] = value_keys
+                end
+                if energy_keys != nil
+                    self.topics[topic]['energy_keys'] = energy_keys
+                end  
+                if limits != nil
+                    self.topics[topic]['limits'] = limits
+                end    
+                if minutes_for_average != nil
+                    self.topics[topic]['minutes_for_average'] = minutes_for_average
+                    log(string.format("emQ: Got time for sliding average length from setup: %d min",minutes_for_average))                            
+                end            
+                self.topics[topic]["name"] = nm
+                self.topics[topic]["subscription"] = tasmota.millis()
+                mqtt.subscribe(topic)
+                log('emQ: Subscribed ' + topic)  
+            else
+                log(string.format("emQ: Meter %s has no topic set.",nm))
+            end                    
         end
     end
 
     def prep_topics()
         if persist.has('emQ_set') && persist.emQ_set.contains('meters') 
             for met: persist.emQ_set['meters'] 
-                if met.contains('name')  
-                    var nm = met['name'] 
-                    var value_keys = met.find('value_keys')          
-                    var limits = met.find('limits')
-                    var energy_keys = met.find('energy_keys')
-                    var minutes_for_average = met.find('minutes_for_average')
-                    var publish_period = met.find('publish_period')
-                    var report_delay = met.find('report_delay')                    
-                    var topic = met.find('topic')
-                    if topic != nil                        
-                        if !self.topics.contains(topic)
-                            self.topics[topic] = map()
-                        end
-                        if publish_period != nil
-                            self.topics[topic]['period'] = publish_period
-                        end
-                        if report_delay != nil
-                            self.topics[topic]['report_delay'] = report_delay                            
-                        end
-                        if value_keys != nil
-                            self.topics[topic]['value_keys'] = value_keys
-                        end
-                        if energy_keys != nil
-                            self.topics[topic]['energy_keys'] = energy_keys
-                        end  
-                        if limits != nil
-                            self.topics[topic]['limits'] = limits
-                        end    
-                        if minutes_for_average != nil
-                            self.topics[topic]['minutes_for_average'] = minutes_for_average
-                            log(string.format("emQ: Got time for sliding average length from setup: %d min",minutes_for_average))                            
-                        end            
-                        self.topics[topic]["name"] = nm
-                        self.topics[topic]["subscription"] = tasmota.millis()
-                        mqtt.subscribe(topic)
-                        log('emQ: Subscribed ' + topic)  
-                    else
-                        log(string.format("emQ: Meter %s has no topic set.",nm))
-                    end                    
-                end
+                self.load_meter(met)
             end
         end
     end
@@ -357,12 +364,19 @@ class ElectricityMonitorMQTT
     end
 
     def set_consumers(name)                      
-        if persist.has('emQ_set')            
+        if persist.has('emQ_set')   
+            var future = map()         
             for k :self.actuators.keys()
                 var act = self.actuators[k]
                 if act.control_id == name
                     if self.data != nil
-                        act.control_actuator(self.data)                
+                        var r_v = act.control_actuator(self.data,future)                
+                        if r_v != nil
+                            if !future.contains(act.control_value)
+                                future[act.control_value] = 0
+                            end
+                            future[act.control_value] += r_v
+                        end
                     end
                 end
             end
@@ -788,6 +802,10 @@ class ElectricityMonitorMQTT
                                 else
                                     pwr_data['Sum_over']=false 
                                 end
+                                if run_avg == nil
+                                    run_avg = sum
+                                    pwr_data['AvgPwr_Active'] = sum
+                                end
                                 if run_avg != nil && run_avg > max
                                     pwr_data['AvgPwr_over']=true
                                 else
@@ -892,16 +910,19 @@ class ElectricityMonitorMQTT
                                     if new_met.contains('name') && met.contains('name') && new_met['name'] == met['name']
                                         found = true
                                         persist.emQ_set['meters'].setitem(i,new_met)
+                                        self.load_meter(new_met)
                                     end
                                 end
                                 if !found
                                     persist.emQ_set['meters'].push(new_met)
+                                    self.load_meter(new_met)
                                 end
                             end
                         else
                             persist.emQ_set['meters'] = list()
                             for new_met: meters
                                 persist.emQ_set['meters'].push(new_met)                                
+                                self.load_meter(new_met)
                             end 
                         end
                     end
@@ -915,16 +936,19 @@ class ElectricityMonitorMQTT
                                     if new_act.contains('name') && act.contains('name') && new_act['name'] == act['name']
                                         found = true                                        
                                         persist.emQ_set['actuators'].setitem(i,new_act)
+                                        self.load_actuator(new_act)
                                     end
                                 end
                                 if !found
                                     persist.emQ_set['actuators'].push(new_act)
+                                    self.load_actuator(new_act)
                                 end
                             end  
                         else
                             persist.emQ_set['actuators'] = list()
                             for new_act: actuators
-                                persist.emQ_set['actuators'].push(new_act)                                
+                                persist.emQ_set['actuators'].push(new_act)  
+                                self.load_actuator(new_act)                              
                             end 
                         end                        
                     end
